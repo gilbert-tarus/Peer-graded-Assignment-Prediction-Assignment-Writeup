@@ -1,0 +1,225 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Gilbert Toroitich Tarus"
+date: "10/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE,warning = FALSE)
+```
+
+## **Introduction**
+
+This is a submission for the final project in Coursera’s Practical Machine Learning by Johns Hopkins University, third course in the Data Science: Statistics and Machine Learning Specialization.
+
+
+One thing that people regularly do is quantify how *much* of a particular activity they do, but they rarely quantify *how well they do it*.In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. You may use any of the other variables to predict with. You should create a report describing *how you built your model*, *how you used cross validation*, *what you think the expected out of sample error is*, and *why you made the choices you did*. You will also use your prediction model to predict 20 different test cases.
+
+In this report, we trained three models: **Random Forest**,**Decision Trees** and **Support Vector Machine (svm)** using k-folds cross validation for purposes of reducing noise and obtaining patterns in the training data. We split the pml-training data set into training and validation sets. The pml-testing data set provided was left for the purposes of the final prediction for quizzes.
+
+From the three models, the **random forest model had the highest accuracy level about 99.5% and a very small out of sample error about 0.5%**. We then use this model to do the final prediction.
+
+
+### **Data**
+
+The training data for this project are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this source:
+
+[http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har). If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+
+```{r}
+library(caret);library(ggplot2);library(dplyr)
+library(skimr)
+library(naniar)
+library(kernlab)
+library(randomForest)
+library(rattle)
+```
+
+## **Getting Data and cleaning data**
+
+```{r}
+trainingDF <- read.csv("data/pml-training.csv")
+pmlTesting <- read.csv("data/pml-testing.csv")
+dim(trainingDF);dim(pmlTesting)
+```
+
+```{r}
+view(head(trainingDF[complete.cases(trainingDF),],10))
+```
+**Check for the missing values**
+
+#### **Removing unnecessary and missing variables.**
+
+**Remove information not necessary to the outcome variable.**
+
+These are the first seven columns of the data.
+
+```{r}
+pml_training <- trainingDF %>% select(-c(1:7))
+```
+
+
+```{r}
+pml_training %>% miss_var_summary()
+```
+There are about 67 variables with high number of missing values. We can eliminate this variables.
+
+```{r}
+pml_training.no.na <- pml_training %>% select(which(colMeans(is.na(.))<0.9))
+```
+
+
+## **Preprocessing**
+
+**Removing zero and near zero variance predictors**
+
+```{r nzv}
+nzvVars <- nearZeroVar(pml_training.no.na)
+pmlDf <- pml_training.no.na[,-nzvVars]
+```
+
+**Check for correlated data**
+
+```{r cor}
+numDat <- select_if(pmlDf,is.numeric)
+highCor<- findCorrelation(cor(numDat),cutoff = 0.9)
+filterPmlDf <- pmlDf[,-highCor]
+```
+
+## **Splitting data to training and validation sets**
+
+We can now split the data to **training** and **validation** data set after cleaning and preprocessing. However, the test set (**"pmlTesting"**) will be left for the final prediction.
+
+
+```{r}
+inTrain <- createDataPartition(y=filterPmlDf$classe, p=0.75, list=FALSE)
+training <- filterPmlDf[inTrain,]
+validation <- filterPmlDf[-inTrain,]
+```
+
+## **Creating and Testing the Models**
+
+We are going to fit three models: **Random Forest**,**Decision Trees** and **SVM** models for classification to check which algorithm is much better to fit the data.
+
+## **Modeling**
+
+### **Cross validation**
+
+To obtain the correct patterns from the data and ensure it is not getting too much noise, we use k-folds cross validation technique.
+
+```{r}
+train_control <- trainControl(method="cv", number=5)
+```
+
+### **Random Forest Model**
+
+```{r rf}
+set.seed(4578)
+rfMod <- train(classe~., data=training, method="rf", trControl = train_control, tuneLength = 5)
+rfPred <- predict(rfMod, validation)
+cmRF <- confusionMatrix(rfPred, factor(validation$classe))
+cmRF
+```
+
+### **Decision Tree**
+
+```{r tree}
+treeMod <- train(classe~., data=training, method="rpart", trControl = train_control, tuneLength = 5)
+
+##  Plo the tree
+fancyRpartPlot(treeMod$finalModel)
+```
+
+**Prediction:**
+
+```{r predTree}
+predTrees <- predict(treeMod, validation)
+cmTrees <- confusionMatrix(predTrees, factor(validation$classe))
+cmTrees
+```
+
+
+## **Support Vector Machine**
+
+```{r svmMod}
+set.seed(1234)
+svmMod <- train(classe~., data=training, method="svmRadial", trControl = train_control, tuneLength = 5, verbose = FALSE)
+
+# Prediction
+predSvm <- predict(svmMod, validation)
+
+#Confusion matrix
+cmSvm <- confusionMatrix(predSvm, factor(validation$classe))
+cmSvm
+```
+
+**Accuracy and Out of Sample Error**
+
+```{r Acc_OSE}
+DTree <- c(cmTrees$overall["Accuracy"],1-c(cmTrees$overall["Accuracy"]))
+RF <- c(cmRF$overall["Accuracy"],1-c(cmRF$overall["Accuracy"]))
+SVM <- c(cmSvm$overall["Accuracy"],1-c(cmSvm$overall["Accuracy"]))
+
+Output <- rbind(DTree,RF,SVM)
+colnames(Output) <- c("Accuracy","oo_S_Err")
+
+Output <- Output %>% apply(.,2, round,3)
+Output[order(-Output[,1]),]
+```
+
+
+The best model is the Random Forest model, with `r RF[1]` accuracy and `r RF[2]` out of sample error rate. We find that to be a sufficient enough model to use for our test sets.
+
+## **Predictions on Test Set**
+
+We will use the random forest model to do prediction on the test set since it has the highest accuracy.
+
+## **Random Forest Model Predictions on the test set**
+
+```{r PredTest}
+testPredRF <- predict(rfMod, pmlTesting)
+print(testPredRF)
+```
+```{r echo=FALSE, results='hide'}
+write.csv(testPredRF, "test_predictions.csv")
+```
+
+## **Appendix**
+
+**correlation matrix of variables in training set**
+
+```{r}
+library(psych)
+cor.plot(numDat,xlas = 2)
+```
+
+Plotting the models
+
+#### **Random Forest model**
+
+```{r}
+plot(rfMod)
+```
+
+#### **Decision Trees**
+
+```{r}
+plot(treeMod)
+```
+
+#### **Support Vector Machine**
+
+```{r}
+plot(svmMod, plotType = "line")
+```
